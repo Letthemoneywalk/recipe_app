@@ -175,6 +175,7 @@ async def search_recipes(
     db: AsyncSession = Depends(get_db),
 ):
     import asyncio
+    import math
 
     if not ingredients or not ingredients.strip():
         raise HTTPException(status_code=400, detail="Введите хотя бы один ингредиент")
@@ -184,46 +185,65 @@ async def search_recipes(
     if not ingredient_names:
         raise HTTPException(status_code=400, detail="Введите хотя бы один ингредиент")
 
-    # Исправляем названия ингредиентов через autocomplete
-    ingredient_names = await asyncio.gather(*[
+    # Исправляем названия через autocomplete
+    ingredient_names = list(await asyncio.gather(*[
         autocomplete_ingredient(name) for name in ingredient_names
-    ])
-    ingredient_names = list(ingredient_names)
+    ]))
 
-    excluded = []
-    if current_user.allergens:
-        excluded += [a.lower() for a in current_user.allergens]
+    total_user = len(ingredient_names)
 
-    results = await search_recipes_by_ingredients(ingredient_names, number=10)
+    # Шаг 1 — получаем всех кандидатов
+    results = await search_recipes_by_ingredients(ingredient_names, number=100)
 
-    filtered = []
-    for r in results:
+    # Шаг 2 — фильтруем по покрытию
+    min_coverage = total_user if total_user <= 2 else math.ceil(total_user * 2 / 3)
+    coverage_filtered = [
+        r for r in results
+        if r.get("usedIngredientCount", 0) >= min_coverage
+    ]
+
+    # Шаг 3 — фильтруем по аллергенам
+    excluded = [a.lower() for a in (current_user.allergens or [])]
+    allergen_filtered = []
+    for r in coverage_filtered:
         missed = [i["name"].lower() for i in r.get("missedIngredients", [])]
         used = [i["name"].lower() for i in r.get("usedIngredients", [])]
         all_ingredients = missed + used
-        has_unwanted = any(
-            any(ex in ing for ing in all_ingredients)
-            for ex in excluded
-        )
-        if not has_unwanted:
-            filtered.append(r)
+        if excluded and any(any(ex in ing for ing in all_ingredients) for ex in excluded):
+            continue
+        allergen_filtered.append(r)
 
-    if not filtered:
-        raise HTTPException(
-            status_code=404,
-            detail="Рецепты не найдены. Попробуйте другие ингредиенты."
-        )
+    if not allergen_filtered:
+        return []
 
-    top3 = filtered[:3]
+    # Шаг 4 — сортируем по покрытию
+    allergen_filtered.sort(key=lambda r: r.get("usedIngredientCount", 0), reverse=True)
 
+    # Шаг 5 — получаем детали максимум для 10
     details = await asyncio.gather(*[
-        get_recipe_details(r["id"]) for r in top3
+        get_recipe_details(r["id"]) for r in allergen_filtered[:10]
     ])
 
-    recipes = []
+    # Шаг 6 — фильтруем по диете
+    diet = current_user.diet
+    diet_filtered = []
     for data in details:
+        if diet == "vegetarian" and not data.get("vegetarian"):
+            continue
+        if diet == "vegan" and not data.get("vegan"):
+            continue
+        if diet == "gluten_free" and not data.get("glutenFree"):
+            continue
+        if diet == "lactose_free" and not data.get("dairyFree"):
+            continue
+        diet_filtered.append(data)
 
-        # Считаем ratio если пользователь указал граммовки
+    if not diet_filtered:
+        return []
+
+    # Шаг 7 — считаем ratio и возвращаем все
+    recipes = []
+    for data in diet_filtered:
         ratio = 1.0
         if user_amounts or user_pieces:
             ratios = []
@@ -248,19 +268,19 @@ async def search_recipes(
                             ratios.append(user_count / recipe_amount)
             if ratios:
                 ratio = min(ratios)
+                if ratio > 5:
+                    ratio = 1.0
 
-                recipes.append(build_recipe_dto(data, ratio))
+        recipes.append(build_recipe_dto(data, ratio))
 
-    # Сохраняем историю поиска — только уникальные запросы
+    # Сохраняем историю поиска
     existing = await db.execute(
         select(SearchHistory).where(
             SearchHistory.user_id == current_user.id,
             SearchHistory.ingredients.cast(String) == json_lib.dumps(ingredient_names),
         )
     )
-
     history_entry = existing.scalar_one_or_none()
-
     if history_entry:
         history_entry.searched_at = func.now()
     else:
@@ -451,14 +471,17 @@ async def save_recipe(
     return recipe
 
 
-@router.delete("/{recipe_id}/save")
+@router.delete("/{spoonacular_id}/save")
 async def unsave_recipe(
-    recipe_id: int,
+    spoonacular_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(
-        select(Recipe).where(Recipe.id == recipe_id, Recipe.user_id == current_user.id)
+        select(Recipe).where(
+            Recipe.spoonacular_id == spoonacular_id,
+            Recipe.user_id == current_user.id
+        )
     )
     recipe = result.scalar_one_or_none()
     if not recipe:

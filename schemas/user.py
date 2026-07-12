@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr
-from models.user import UserGoal, UserDiet
+from models.user import UserDiet
 from pydantic import BaseModel, EmailStr, field_validator
 
 class UserRegister(BaseModel):
@@ -25,7 +25,6 @@ class UserProfile(BaseModel):
     age: int | None = None
     weight: float | None = None
     height: float | None = None
-    goal: UserGoal = UserGoal.maintenance
     diet: UserDiet = UserDiet.regular
     allergens: list[str] = []
 
@@ -34,7 +33,6 @@ class UserResponse(BaseModel):
     id: int
     email: str
     name: str | None
-    goal: UserGoal
     diet: UserDiet
     allergens: list[str] = []
 

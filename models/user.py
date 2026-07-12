@@ -11,14 +11,8 @@ from core.constants import (
 )
 
 
-class UserGoal(str, enum.Enum):
-    lose_weight = "lose_weight"
-    gain_muscle = "gain_muscle"
-    maintenance = "maintenance"
-
 class UserDiet(str, enum.Enum):
     regular = "regular"
-    healthy = "healthy"
     vegetarian = "vegetarian"
     vegan = "vegan"
     lactose_free = "lactose_free"
@@ -35,7 +29,6 @@ class User(Base):
     age: Mapped[int | None] = mapped_column(Integer)
     weight: Mapped[float | None] = mapped_column(Float)
     height: Mapped[float | None] = mapped_column(Float)
-    goal: Mapped[UserGoal] = mapped_column(Enum(UserGoal), default=UserGoal.maintenance)
     diet: Mapped[UserDiet] = mapped_column(Enum(UserDiet), default=UserDiet.regular)
     allergens: Mapped[list | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

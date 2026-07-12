@@ -23,5 +23,5 @@ async def health():
 async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=500,
-        content={"message": str(exc)}
+        content={"detail": "Внутренняя ошибка сервера. Попробуйте ещё раз."}
     )
